@@ -1,0 +1,117 @@
+version: '3.8'
+
+services:
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: espresso_rabbitmq
+    ports:
+      - "5672:5672"   # AMQP
+      - "15672:15672" # Management UI
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - payment_net
+
+  node-a:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.node
+    container_name: espresso_node_a
+    environment:
+      NODE_ID: node-a
+      NODE_PORT: 5001
+      GRPC_PORT: 6001
+      PEER_NODES: node-b:5002:6002,node-c:5003:6003
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      DATABASE_URL: sqlite:///./data_node_a.db
+    ports:
+      - "5001:5001"
+      - "6001:6001"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - payment_net
+
+  node-b:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.node
+    container_name: espresso_node_b
+    environment:
+      NODE_ID: node-b
+      NODE_PORT: 5002
+      GRPC_PORT: 6002
+      PEER_NODES: node-a:5001:6001,node-c:5003:6003
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      DATABASE_URL: sqlite:///./data_node_b.db
+    ports:
+      - "5002:5002"
+      - "6002:6002"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - payment_net
+
+  node-c:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.node
+    container_name: espresso_node_c
+    environment:
+      NODE_ID: node-c
+      NODE_PORT: 5003
+      GRPC_PORT: 6003
+      PEER_NODES: node-a:5001:6001,node-b:5002:6002
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      DATABASE_URL: sqlite:///./data_node_c.db
+    ports:
+      - "5003:5003"
+      - "6003:6003"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - payment_net
+
+  gateway:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.gateway
+    container_name: espresso_gateway
+    environment:
+      GATEWAY_PORT: 8000
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      JWT_SECRET: academic-distributed-systems-secret-key-2026
+    ports:
+      - "8000:8000"
+    depends_on:
+      - node-a
+      - node-b
+      - node-c
+      - rabbitmq
+    networks:
+      - payment_net
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.frontend
+    container_name: espresso_frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - gateway
+    networks:
+      - payment_net
+
+networks:
+  payment_net:
+    driver: bridge
